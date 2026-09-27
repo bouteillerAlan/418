@@ -2,10 +2,11 @@ local M = {}
 local N = vim.api
 
 --- Opens a scratch buffer in a window and return the id of the window and the id of the buffer
----@return integer, integer
+--- @return integer, integer
 function createBuf()
   local buf = N.nvim_create_buf(false, true)
   N.nvim_set_option_value('buftype', 'acwrite', { buf = buf })
+  N.nvim_buf_set_name(buf, 's-pi-' .. buf)
 
   local win = N.nvim_open_win(buf, true, {
     relative = 'cursor',
@@ -21,14 +22,26 @@ function createBuf()
   return buf, win
 end
 
+--- Return the content of a buffer in a string format
+--- @param buf integer
+--- @return string
+function getBufContent(buf)
+  local contents = N.nvim_buf_get_lines(buf, 0, -1, false)
+  local prompt = ''
+  for _, content in ipairs(contents) do
+    prompt = prompt .. content
+  end
+  return prompt
+end
+
 --- Main function of the module
 function M.quatreCentDixHuit()
 
-  local path = N.nvim_buf_get_name(0)
+  local currentPath = N.nvim_buf_get_name(0)
   local buf, win = createBuf()
 
   -- inject the path at line 1 and position the cursor at line 2
-  N.nvim_buf_set_lines(buf, 0, -1, false, { 'File path:' .. path })
+  N.nvim_buf_set_lines(buf, 0, -1, false, { 'File path:' .. currentPath })
   N.nvim_buf_set_lines(buf, 1, -1, false, { '' } )
   N.nvim_win_set_cursor(win, { 2, 0 })
 
@@ -40,12 +53,8 @@ function M.quatreCentDixHuit()
     group = group,
     buffer = buf,
     callback = function ()
-      local contents = N.nvim_buf_get_lines(buf, 0, -1, false)
-      local prompt = ''
-      for _idx, content in ipairs(contents) do
-        prompt = prompt .. content
-      end
-      print('prompt is: ' .. prompt)
+      print('prompt is: ' .. getBufContent(buf))
+      N.nvim_set_option_value('modified', false, { buf = buf }) -- this is important, that avoid error when :w
     end
   })
 end
