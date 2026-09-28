@@ -104,4 +104,10 @@ function M.setup()
   vim.keymap.set("n", "<leader>ppa", M.quatreCentDixHuit, {desc = ""})
 end
 
-return M
+return {
+  name = "418",
+  dir = vim.fn.stdpath("config"),
+  config = function()
+    M.setup()
+  end,
+}
