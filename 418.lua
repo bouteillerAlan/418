@@ -82,6 +82,9 @@ function M.quatreCentDixHuit()
       local stdout = U.new_pipe()
       local stderr = U.new_pipe()
 
+      -- save extMark data
+      local localBuf, nsId, markId, gutterMarkId
+
       local handle, pid = U.spawn(cmd, {
         args = args,
         stdio = { stdin, stdout, stderr }
@@ -90,13 +93,23 @@ function M.quatreCentDixHuit()
       end)
 
       U.read_start(stdout, function(err, data)
-        assert(not err, err)
-        if data then
-          -- print("stdout chunk", stdout, data)
-
-        else
-          print("stdout end", stdout)
-        end
+        -- mandatory to use schedule to avoid executing that in the fast event context and getting an error
+        vim.schedule(function()
+          if err then
+            M.setMarkUnderCursor(err, "ErrorMsg", true)
+          elseif data then
+            -- print("stdout chunk", stdout, data)
+            -- todo: process the json
+            local mark = M.setMarkUnderCursor(data, "Comment", false)
+            localBuf = mark[1]
+            nsId = mark[2]
+            markId = mark[3]
+            gutterMarkId = mark[4]
+          elseif localBuf then
+            --print("stdout end", stdout)
+            M.removeMark(localBuf, nsId, { markId, gutterMarkId })
+          end
+        end)
       end)
 
       U.read_start(stderr, function(err, data)
@@ -107,20 +120,31 @@ function M.quatreCentDixHuit()
           print("stderr end", stderr)
         end
       end)
-
     end
   })
 end
 
--- show text on virtual line
----@param content string
-function M.setMarkUnderCursor(content)
+--- Shows text on a virtual line
+--- Text is show on top of the cursor line except for line 1 where the text is below
+---@param content string the content you want to be shown
+---@param level "Comment" | "WarningMsg" | "ErrorMsg" the type of the message, change the color and style of the text
+---@param autoClose boolean if true the mark auto remove itself after 10s
+---@return integer[] markData return all the data needed to remove the mark later, in order: localBuf, nsId, markId, gutterMarkId
+function M.setMarkUnderCursor(content, level, autoClose)
   local localBuf = N.nvim_get_current_buf()
-  local rid = "418-" .. os.time() -- create a unique name
+  local rid = "418-" .. os.time() -- create a unique name to avoid conflict
   local nsId = N.nvim_create_namespace(rid)
 
   if content == nil or string.len(content) == 0 then
     content = "Pi is thinking..."
+  end
+
+  if level == nil or string.len(level) == 0 then
+    level = "Comment"
+  end
+
+  if autoClose == nil then
+    autoClose = false
   end
 
   -- row, col
@@ -136,20 +160,28 @@ function M.setMarkUnderCursor(content)
   -- {{ "Error message", "ErrorMsg" }},
   local markId = N.nvim_buf_set_extmark(localBuf, nsId, rc[1], rc[2], {
     virt_lines = {
-      {{ content, "Comment" }},
+      {{ content, level }},
     },
     virt_lines_above = true,
   })
 
   local gutterMarkId = N.nvim_buf_set_extmark(localBuf, nsId, rc[1], rc[2], {
     sign_text = "π",
-    sign_hl_group = "DiagnosticInfo",
+    sign_hl_group = level,
   })
 
-  vim.defer_fn(function ()
-    N.nvim_buf_del_extmark(localBuf, nsId, markId)
-    N.nvim_buf_del_extmark(localBuf, nsId, gutterMarkId)
-  end, 3000)
+  return { localBuf, nsId, markId, gutterMarkId }
+end
+
+--- Removes extmarks from a buffer
+---@param localBuf integer the buffer where the mark are
+---@param nsId integer the group id of the mark
+---@param ids integer[] the mark id's you want to remove
+---@return nil
+function M.removeMark(localBuf, nsId, ids)
+  for _, id in ipairs(ids) do
+    N.nvim_buf_del_extmark(localBuf, nsId, id)
+  end
 end
 
 function M.setup()
