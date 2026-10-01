@@ -75,27 +75,25 @@ function M.quatreCentDixHuit()
       -- message_update.assistantMessageEvent.delta when its type is
       -- text_delta.
 
+      local cmd = "pi"
+      local args = { "--mode", "rpc", "--no-session" }
+
       local stdin = U.new_pipe()
       local stdout = U.new_pipe()
       local stderr = U.new_pipe()
 
-      print("stdin", stdin)
-      print("stdout", stdout)
-      print("stderr", stderr)
-
-      local handle, pid = U.spawn("fetch", { -- WARN: this fetch is pretty much infinite 🤡
-        stdio = {stdin, stdout, stderr}
+      local handle, pid = U.spawn(cmd, {
+        args = args,
+        stdio = { stdin, stdout, stderr }
       }, function(code, signal) -- on exit
-        print("exit code", code)
-        print("exit signal", signal)
+        print(">>> exit:", code, signal)
       end)
-
-      print("process opened", handle, pid)
 
       U.read_start(stdout, function(err, data)
         assert(not err, err)
         if data then
-          print("stdout chunk", stdout, data)
+          -- print("stdout chunk", stdout, data)
+
         else
           print("stdout end", stdout)
         end
@@ -110,50 +108,47 @@ function M.quatreCentDixHuit()
         end
       end)
 
-
-      -- vim.system({ "bash", "-c", "pi", "--mode", "rpc", "--no-session" }, { text = true, timeout = 3000 },
-      --   function (response)
-      --     if response.code ~= 0 then
-      --       vim.schedule(function () -- mendatory to avoid "nvim_echo must not be called in a fast event context"
-      --         vim.notify('Error from 418:: ' .. response.stderr, vim.log.levels.ERROR)
-      --       end)
-      --     end
-      --     vim.schedule(function ()
-      --       print(response.stdout)
-      --       vim.U.spawn()
-      --     end)
-      --   end
-      -- )
     end
   })
 end
 
 -- show text on virtual line
-function M.setMark()
+---@param content string
+function M.setMarkUnderCursor(content)
   local localBuf = N.nvim_get_current_buf()
-  local ns_id = N.nvim_create_namespace("418")
-  -- local markId = N.nvim_buf_set_extmark(localBuf, ns_id, 2, 2, {
-  --   virt_text = {{ "x", "y" }},
-  --   virt_text_pos = "inline",
-  -- })
+  local rid = "418-" .. os.time() -- create a unique name
+  local nsId = N.nvim_create_namespace(rid)
 
-  -- virtual line! awesome!
-  local markId = N.nvim_buf_set_extmark(localBuf, ns_id, 2, 2, {
+  if content == nil or string.len(content) == 0 then
+    content = "Pi is thinking..."
+  end
+
+  -- row, col
+  local cursor = vim.api.nvim_win_get_cursor(0)
+  local rc = { cursor[1] - 1, cursor[2] } -- -1 to get the line on top of the current
+  if cursor[1] == 1 then -- handle the first line case
+    rc[1] = rc[1] + 1
+  end
+
+  -- note: we need these kind of message
+  -- {{ "Generated output", "Comment" }},
+  -- {{ "Warning message", "WarningMsg" }},
+  -- {{ "Error message", "ErrorMsg" }},
+  local markId = N.nvim_buf_set_extmark(localBuf, nsId, rc[1], rc[2], {
     virt_lines = {
-      {{ "Generated output", "Comment" }},
-      {{ "Second displayed line", "String" }},
+      {{ content, "Comment" }},
     },
     virt_lines_above = true,
   })
 
-  -- injected directly
-  -- local gutterMarkId = N.nvim_buf_set_extmark(localBuf, ns_id, 2, 0, {
-  --   sign_text = "o",
-  --   sign_hl_group = "y",
-  -- })
+  local gutterMarkId = N.nvim_buf_set_extmark(localBuf, nsId, rc[1], rc[2], {
+    sign_text = "π",
+    sign_hl_group = "DiagnosticInfo",
+  })
+
   vim.defer_fn(function ()
-    N.nvim_buf_del_extmark(localBuf, ns_id, markId)
-    -- N.nvim_buf_del_extmark(localBuf, ns_id, gutterMarkId)
+    N.nvim_buf_del_extmark(localBuf, nsId, markId)
+    N.nvim_buf_del_extmark(localBuf, nsId, gutterMarkId)
   end, 3000)
 end
 
