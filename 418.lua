@@ -99,12 +99,48 @@ function M.quatreCentDixHuit()
             M.setMarkUnderCursor(err, "ErrorMsg", true)
           elseif data then
             -- print("stdout chunk", stdout, data)
-            -- todo: process the json
-            local mark = M.setMarkUnderCursor(data, "Comment", false)
-            localBuf = mark[1]
-            nsId = mark[2]
-            markId = mark[3]
-            gutterMarkId = mark[4]
+            local jsonResponse = vim.json.decode(data)
+            local type = jsonResponse.type
+            local success = jsonResponse.sucess
+
+            -- todo: trouver le moyen d'envoyer le prompt
+            -- puis lire la reponse finale
+            -- puis lire le steam avec delta (bonus ux)
+
+            -- if (event.type === "agent_start") {
+              --   console.log("agent démarré");
+              -- }
+              --
+              -- if (event.type === "turn_start") {
+                --   console.log("tour démarré");
+                -- }
+                --
+                -- if (event.type === "message_update") {
+                  --   const update = event.assistantMessageEvent;
+                  --
+                  --   if (update?.type === "text_delta") {
+                    --     // réponse en streaming
+                    --     process.stdout.write(update.delta);       jsonResponse.assistantMessageEvent.delta quand data.type === "message_update" && data.assistantMessageEvent?.type === "text_delta"
+                    --   }
+                    -- }
+                    --
+                    -- if (event.type === "agent_settled") {
+                      --   console.log("terminé");
+                      -- }
+                      --
+                      -- turn_end et event.message.content pour la réponse définitive  jsonResponse.message.content[0].text
+
+            if type == "response" or type == "turn_end" then
+              if success then
+                local mark = M.setMarkUnderCursor(jsonResponse.message.content[0].text, "Comment", false)
+                localBuf = mark[1]
+                nsId = mark[2]
+                markId = mark[3]
+                gutterMarkId = mark[4]
+              else
+                M.setMarkUnderCursor(jsonResponse.err, "ErrorMsg", true)
+              end
+            end
           elseif localBuf then
             --print("stdout end", stdout)
             M.removeMark(localBuf, nsId, { markId, gutterMarkId })
@@ -115,9 +151,11 @@ function M.quatreCentDixHuit()
       U.read_start(stderr, function(err, data)
         assert(not err, err)
         if data then
-          print("stderr chunk", stderr, data)
+          -- print("stderr chunk", stderr, data)
+          M.setMarkUnderCursor(data, "ErrorMsg", true)
         else
-          print("stderr end", stderr)
+          -- print("stderr end", stderr)
+          -- close
         end
       end)
     end
@@ -169,6 +207,12 @@ function M.setMarkUnderCursor(content, level, autoClose)
     sign_text = "π",
     sign_hl_group = level,
   })
+
+  if autoClose then
+    vim.defer_fn(function()
+      M.removeMark(localBuf, nsId, { markId, gutterMarkId })
+    end, 10000)
+  end
 
   return { localBuf, nsId, markId, gutterMarkId }
 end
