@@ -1,3 +1,4 @@
+require("plugins.418.rpc-types")
 local M = {}
 local N = vim.api
 local U = vim.uv
@@ -63,7 +64,7 @@ function M.quatreCentDixHuit()
       -- to get pi running via rpc
       -- we need first to exec "pi --mode rpc --no-session" -- todo: put no session behind a settings
       --
-      -- then we need to send a message "{"id": "req-1", "type": "prompt", "message": "Hello, world!"}"
+      -- then we need to send a message "{"id": "req-1", "type": "prompt", "message": "What give 2+2?"}"
       -- the id there is to retrieve the response since all that is async
       -- response is {"id": "req-1", "type": "response", "command": "prompt", "success": true}
       -- error is {"id":"req-3","type":"response","command":"set_model","success":false,"error":"Model not found: invalid/model"}
@@ -99,36 +100,30 @@ function M.quatreCentDixHuit()
             M.setMarkUnderCursor(err, "ErrorMsg", true)
           elseif data then
             -- print("stdout chunk", stdout, data)
+            ---@type PiRpcEvent
             local jsonResponse = vim.json.decode(data)
             local type = jsonResponse.type
-            local success = jsonResponse.sucess
+            local success = jsonResponse.success
 
             -- todo: trouver le moyen d'envoyer le prompt
             -- puis lire la reponse finale
             -- puis lire le steam avec delta (bonus ux)
 
-            -- if (event.type === "agent_start") {
-              --   console.log("agent démarré");
-              -- }
-              --
-              -- if (event.type === "turn_start") {
-                --   console.log("tour démarré");
-                -- }
-                --
-                -- if (event.type === "message_update") {
-                  --   const update = event.assistantMessageEvent;
-                  --
-                  --   if (update?.type === "text_delta") {
-                    --     // réponse en streaming
-                    --     process.stdout.write(update.delta);       jsonResponse.assistantMessageEvent.delta quand data.type === "message_update" && data.assistantMessageEvent?.type === "text_delta"
-                    --   }
-                    -- }
-                    --
-                    -- if (event.type === "agent_settled") {
-                      --   console.log("terminé");
-                      -- }
-                      --
-                      -- turn_end et event.message.content pour la réponse définitive  jsonResponse.message.content[0].text
+            if type == "agent_start" then
+              print("agent start", vim.inspect(jsonResponse))
+            end
+
+            if type == "turn_start" then
+              print("turn start", vim.inspect(jsonResponse))
+            end
+
+            if type == "message_update" then
+              print("message update", vim.inspect(jsonResponse.assistantMessageEvent))
+            end
+
+            if type == "turn_end" then
+              print("agent last response", vim.inspect(jsonResponse.message))
+            end
 
             if type == "response" or type == "turn_end" then
               if success then
