@@ -100,6 +100,7 @@ function M.quatreCentDixHuit()
             M.setMarkUnderCursor(err, "ErrorMsg", true)
           elseif data then
             -- print("stdout chunk", stdout, data)
+
             ---@type PiRpcEvent
             local jsonResponse = vim.json.decode(data)
             local type = jsonResponse.type
@@ -125,17 +126,17 @@ function M.quatreCentDixHuit()
               print("agent last response", vim.inspect(jsonResponse.message))
             end
 
-            if type == "response" or type == "turn_end" then
-              if success then
-                local mark = M.setMarkUnderCursor(jsonResponse.message.content[0].text, "Comment", false)
-                localBuf = mark[1]
-                nsId = mark[2]
-                markId = mark[3]
-                gutterMarkId = mark[4]
-              else
-                M.setMarkUnderCursor(jsonResponse.err, "ErrorMsg", true)
-              end
-            end
+            -- if type == "response" or type == "turn_end" then
+            --   if success then
+            --     local mark = M.setMarkUnderCursor(jsonResponse.message.content[0].text, "Comment", false)
+            --     localBuf = mark[1]
+            --     nsId = mark[2]
+            --     markId = mark[3]
+            --     gutterMarkId = mark[4]
+            --   else
+            --     M.setMarkUnderCursor(jsonResponse.error, "ErrorMsg", true)
+            --   end
+            -- end
           elseif localBuf then
             --print("stdout end", stdout)
             M.removeMark(localBuf, nsId, { markId, gutterMarkId })
