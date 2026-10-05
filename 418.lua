@@ -125,11 +125,6 @@ function M.quatreCentDixHuit()
       -- local prompt = getBufContentHasString(buf)
       N.nvim_buf_delete(buf, { force = true }) -- bwipeout
 
-      -- then we need to send a message "{"id": "req-1", "type": "prompt", "message": "What give 2+2?"}"
-      -- the id there is to retrieve the response since all that is async
-      -- response is {"id": "req-1", "type": "response", "command": "prompt", "success": true}
-      -- error is {"id":"req-3","type":"response","command":"set_model","success":false,"error":"Model not found: invalid/model"}
-      --
       -- Hint: vim.system() only returns output after Pi exits, so use
       -- vim.U.spawn() with stdin/stdout pipes. Write the JSONL prompt to
       -- stdin (... .. "\n"), then read_start() stdout, buffer chunks by
@@ -159,15 +154,15 @@ function M.quatreCentDixHuit()
         end
       end)
 
-      U.read_start(stdout, function(err, data)
-        -- mandatory to use schedule to avoid executing that in the fast event context and getting an error
+      U.read_start(stdout, function(err, dataStream)
+        local dataSteamBuffer = ""
+
+        -- note: mandatory to use schedule to avoid executing that in the fast event context and getting an error
         vim.schedule(function()
           if err then
             M.setMarkUnderCursor("Error while reading output stream: " .. tostring(err), "ErrorMsg", true)
             return
-          elseif data then
-            -- print("stdout chunk", stdout, data)
-
+          elseif dataStream then
 
             -- todo:
             --  uv.read_start returns arbitrary stream chunks, not one complete JSON message per callback
@@ -184,35 +179,42 @@ function M.quatreCentDixHuit()
             -- The fix is to keep a stdout buffer, append each data chunk, split complete lines on \n, decode each
             -- complete line, and keep the final unfinished line for the next callback
 
+            -- getting the whole response from rpc stream
 
-            ---@type boolean, PiRpcEvent
-            local ok, jsonResponse = pcall(vim.json.decode, data)
-            if not ok then
-              M.setMarkUnderCursor("Error while decoding json response", "ErrorMsg", true)
+            if dataStream:sub(-1) ~= "\n" then
+              dataSteamBuffer = dataSteamBuffer .. dataStream
               return
             end
 
-            local type = jsonResponse.type
+            print("data stream completed " .. dataSteamBuffer:len() .. " origin " .. dataStream:len())
 
-            if type == "agent_start" then
-              M.setMarkUnderCursor("agent_start", "Comment", false)
+            if false then
+              ---@type boolean, PiRpcEvent
+              local ok, jsonResponse = pcall(vim.json.decode, dataStream)
+              if not ok then
+                M.setMarkUnderCursor("Error while decoding response", "ErrorMsg", true)
+                return
+              end
+
+              local type = jsonResponse.type
+
+              if type == "agent_start" then
+                M.setMarkUnderCursor("agent_start", "Comment", false)
+              end
+
+              if type == "turn_start" then
+                M.setMarkUnderCursor("turn_start", "Comment", false)
+              end
+
+              if type == "message_update" then
+                M.setMarkUnderCursor("message_update", "Comment", false)
+              end
+
+              if type == "turn_end" then
+                M.setMarkUnderCursor("turn_end", "Comment", false)
+              end
             end
 
-            if type == "turn_start" then
-              M.setMarkUnderCursor("turn_start", "Comment", false)
-            end
-
-            if type == "message_update" then
-              M.setMarkUnderCursor("message_update", "Comment", false)
-            end
-
-            if type == "turn_end" then
-              M.setMarkUnderCursor("turn_end", "Comment", false)
-            end
-
-          -- elseif localBuf then
-            --print("stdout end", stdout)
-            -- M.removeMark(localBuf, nsId, { markId, gutterMarkId })
           end
         end)
       end)
@@ -220,7 +222,6 @@ function M.quatreCentDixHuit()
       U.read_start(stderr, function(err, data)
         assert(not err, err)
         if data then
-          -- print("stderr chunk", stderr, data)
           M.setMarkUnderCursor(data, "ErrorMsg", true)
           return
         else
@@ -228,6 +229,7 @@ function M.quatreCentDixHuit()
           -- close
         end
       end)
+
     end
   })
 end
