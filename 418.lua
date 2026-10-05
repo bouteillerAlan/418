@@ -36,128 +36,6 @@ function getBufContentHasString(buf)
   return prompt
 end
 
---- Main function of the module
-function M.quatreCentDixHuit()
-
-  local currentPath = N.nvim_buf_get_name(0)
-  local buf, win = createBuf()
-
-  -- inject the path at line 1 and position the cursor at line 2
-  N.nvim_buf_set_lines(buf, 0, -1, false, { 'File path:' .. currentPath .. ' ' })
-  N.nvim_buf_set_lines(buf, 1, -1, false, { '' } )
-  N.nvim_win_set_cursor(win, { 2, 0 })
-
-  -- setup an event for write
-  -- group allow to remove the cmd on reload for example
-  -- avoiding multiple instance of one cmd
-  local group = N.nvim_create_augroup("BufAction", { clear = true })
-  N.nvim_create_autocmd('BufWriteCmd', {
-    group = group,
-    buffer = buf,
-    callback = function ()
-      N.nvim_set_option_value('modified', false, { buf = buf }) -- this is important, that avoid error when :w
-      local prompt = getBufContentHasString(buf)
-      N.nvim_buf_delete(buf, { force = true }) -- bwipeout
-
-      -- run a cmd
-      --
-      -- to get pi running via rpc
-      -- we need first to exec "pi --mode rpc --no-session" -- todo: put no session behind a settings
-      --
-      -- then we need to send a message "{"id": "req-1", "type": "prompt", "message": "What give 2+2?"}"
-      -- the id there is to retrieve the response since all that is async
-      -- response is {"id": "req-1", "type": "response", "command": "prompt", "success": true}
-      -- error is {"id":"req-3","type":"response","command":"set_model","success":false,"error":"Model not found: invalid/model"}
-      --
-      -- Hint: vim.system() only returns output after Pi exits, so use
-      -- vim.U.spawn() with stdin/stdout pipes. Write the JSONL prompt to
-      -- stdin (... .. "\n"), then read_start() stdout, buffer chunks by
-      -- newline, decode each JSON record, and print
-      -- message_update.assistantMessageEvent.delta when its type is
-      -- text_delta.
-
-      local cmd = "pi"
-      local args = { "--mode", "rpc", "--no-session" }
-
-      local stdin = U.new_pipe()
-      local stdout = U.new_pipe()
-      local stderr = U.new_pipe()
-
-      -- save extMark data
-      local localBuf, nsId, markId, gutterMarkId
-
-      local handle, pid = U.spawn(cmd, {
-        args = args,
-        stdio = { stdin, stdout, stderr }
-      }, function(code, signal) -- on exit
-        print(">>> exit:", code, signal)
-      end)
-
-      U.read_start(stdout, function(err, data)
-        -- mandatory to use schedule to avoid executing that in the fast event context and getting an error
-        vim.schedule(function()
-          if err then
-            M.setMarkUnderCursor(err, "ErrorMsg", true)
-          elseif data then
-            -- print("stdout chunk", stdout, data)
-
-            ---@type PiRpcEvent
-            local jsonResponse = vim.json.decode(data)
-            local type = jsonResponse.type
-            local success = jsonResponse.success
-
-            -- todo: trouver le moyen d'envoyer le prompt
-            -- puis lire la reponse finale
-            -- puis lire le steam avec delta (bonus ux)
-
-            if type == "agent_start" then
-              print("agent start", vim.inspect(jsonResponse))
-            end
-
-            if type == "turn_start" then
-              print("turn start", vim.inspect(jsonResponse))
-            end
-
-            if type == "message_update" then
-              print("message update", vim.inspect(jsonResponse.assistantMessageEvent))
-            end
-
-            if type == "turn_end" then
-              print("agent last response", vim.inspect(jsonResponse.message))
-            end
-
-            -- if type == "response" or type == "turn_end" then
-            --   if success then
-            --     local mark = M.setMarkUnderCursor(jsonResponse.message.content[0].text, "Comment", false)
-            --     localBuf = mark[1]
-            --     nsId = mark[2]
-            --     markId = mark[3]
-            --     gutterMarkId = mark[4]
-            --   else
-            --     M.setMarkUnderCursor(jsonResponse.error, "ErrorMsg", true)
-            --   end
-            -- end
-          elseif localBuf then
-            --print("stdout end", stdout)
-            M.removeMark(localBuf, nsId, { markId, gutterMarkId })
-          end
-        end)
-      end)
-
-      U.read_start(stderr, function(err, data)
-        assert(not err, err)
-        if data then
-          -- print("stderr chunk", stderr, data)
-          M.setMarkUnderCursor(data, "ErrorMsg", true)
-        else
-          -- print("stderr end", stderr)
-          -- close
-        end
-      end)
-    end
-  })
-end
-
 --- Shows text on a virtual line
 --- Text is show on top of the cursor line except for line 1 where the text is below
 ---@param content string the content you want to be shown
@@ -222,6 +100,136 @@ function M.removeMark(localBuf, nsId, ids)
   for _, id in ipairs(ids) do
     N.nvim_buf_del_extmark(localBuf, nsId, id)
   end
+end
+
+--- Main function of the module
+function M.quatreCentDixHuit()
+
+  local currentPath = N.nvim_buf_get_name(0)
+  local buf, win = createBuf()
+
+  -- inject the path at line 1 and position the cursor at line 2
+  N.nvim_buf_set_lines(buf, 0, -1, false, { 'File path:' .. currentPath .. ' ' })
+  N.nvim_buf_set_lines(buf, 1, -1, false, { '' } )
+  N.nvim_win_set_cursor(win, { 2, 0 })
+
+  -- setup an event for write
+  -- group allow to remove the cmd on reload for example
+  -- avoiding multiple instance of one cmd
+  local group = N.nvim_create_augroup("BufAction", { clear = true })
+  N.nvim_create_autocmd('BufWriteCmd', {
+    group = group,
+    buffer = buf,
+    callback = function ()
+      N.nvim_set_option_value('modified', false, { buf = buf }) -- this is important, that avoid error when :w
+      -- local prompt = getBufContentHasString(buf)
+      N.nvim_buf_delete(buf, { force = true }) -- bwipeout
+
+      -- then we need to send a message "{"id": "req-1", "type": "prompt", "message": "What give 2+2?"}"
+      -- the id there is to retrieve the response since all that is async
+      -- response is {"id": "req-1", "type": "response", "command": "prompt", "success": true}
+      -- error is {"id":"req-3","type":"response","command":"set_model","success":false,"error":"Model not found: invalid/model"}
+      --
+      -- Hint: vim.system() only returns output after Pi exits, so use
+      -- vim.U.spawn() with stdin/stdout pipes. Write the JSONL prompt to
+      -- stdin (... .. "\n"), then read_start() stdout, buffer chunks by
+      -- newline, decode each JSON record, and print
+      -- message_update.assistantMessageEvent.delta when its type is
+      -- text_delta.
+
+      local prompt = "{\"id\": \"req-1\", \"type\": \"prompt\", \"message\": \"What give 2+2?\"}"
+      local cmd = "pi"
+      local args = { "--mode", "rpc", "--no-session" }
+
+      local stdin = U.new_pipe()
+      local stdout = U.new_pipe()
+      local stderr = U.new_pipe()
+
+      local handle, pid = U.spawn(cmd, {
+        args = args,
+        stdio = { stdin, stdout, stderr }
+      }, function(code, signal) -- on exit
+        print(">>> exit:", code, signal)
+      end)
+
+      U.write(stdin, prompt .. "\n", function (err)
+        if err then
+          M.setMarkUnderCursor("Error writing the prompt: " .. tostring(err), "ErrorMsg", true)
+          return
+        end
+      end)
+
+      U.read_start(stdout, function(err, data)
+        -- mandatory to use schedule to avoid executing that in the fast event context and getting an error
+        vim.schedule(function()
+          if err then
+            M.setMarkUnderCursor("Error while reading output stream: " .. tostring(err), "ErrorMsg", true)
+            return
+          elseif data then
+            -- print("stdout chunk", stdout, data)
+
+
+            -- todo:
+            --  uv.read_start returns arbitrary stream chunks, not one complete JSON message per callback
+            --
+            -- Pi RPC writes JSONL, so data can contain:
+            -- - half of one JSON object
+            -- - multiple JSON objects separated by \n
+            -- - a chunk ending midway through a JSON object
+            --
+            -- vim.json.decode(data) requires exactly one complete JSON value. Therefore it fails when a chunk is
+            -- incomplete or combines two JSONL records. You see it twice because the process produced at least
+            -- two chunks that were not independently valid JSON
+            --
+            -- The fix is to keep a stdout buffer, append each data chunk, split complete lines on \n, decode each
+            -- complete line, and keep the final unfinished line for the next callback
+
+
+            ---@type boolean, PiRpcEvent
+            local ok, jsonResponse = pcall(vim.json.decode, data)
+            if not ok then
+              M.setMarkUnderCursor("Error while decoding json response", "ErrorMsg", true)
+              return
+            end
+
+            local type = jsonResponse.type
+
+            if type == "agent_start" then
+              M.setMarkUnderCursor("agent_start", "Comment", false)
+            end
+
+            if type == "turn_start" then
+              M.setMarkUnderCursor("turn_start", "Comment", false)
+            end
+
+            if type == "message_update" then
+              M.setMarkUnderCursor("message_update", "Comment", false)
+            end
+
+            if type == "turn_end" then
+              M.setMarkUnderCursor("turn_end", "Comment", false)
+            end
+
+          -- elseif localBuf then
+            --print("stdout end", stdout)
+            -- M.removeMark(localBuf, nsId, { markId, gutterMarkId })
+          end
+        end)
+      end)
+
+      U.read_start(stderr, function(err, data)
+        assert(not err, err)
+        if data then
+          -- print("stderr chunk", stderr, data)
+          M.setMarkUnderCursor(data, "ErrorMsg", true)
+          return
+        else
+          -- print("stderr end", stderr)
+          -- close
+        end
+      end)
+    end
+  })
 end
 
 function M.setup()
