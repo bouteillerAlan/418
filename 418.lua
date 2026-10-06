@@ -6,12 +6,14 @@ local M = {}
 local N = vim.api
 local U = vim.uv
 
+---@alias markDataType { [1]: integer, [2]: integer, [3]: integer, [4]: integer, [5]: { [1]: integer, [2]: integer } }
+
 --- Shows text on a virtual line
 --- Text is show on top of the cursor line except for line 1 where the text is below
 ---@param content string the content you want to be shown
 ---@param level "Comment" | "WarningMsg" | "ErrorMsg" the type of the message, change the color and style of the text
 ---@param autoClose boolean if true the mark auto remove itself after 10s
----@return integer[] markData return all the data needed to update or remove the mark later, in order: localBuf, nsId, markId, gutterMarkId, rc
+---@return markDataType markData return all the data needed to update or remove the mark later, in order: localBuf, nsId, markId, gutterMarkId, rc
 function M.setMarkUnderCursor(content, level, autoClose)
   validationService.validateString(content, "content", true)
   validationService.validateString(level, "level", true)
@@ -178,6 +180,9 @@ function M.quatreCentDixHuit()
 
       local dataStreamBuffer = ""
       local isEof = false
+      -- create a mark and store all the ids to update it
+      local localBuf, nsId, markId, _, rc = unpack(M.setMarkUnderCursor("agent_start", "Comment", false))
+
       U.read_start(stdout, function(err, dataStream)
         -- note: mandatory to use schedule to avoid executing that in the fast event context and getting an error
         vim.schedule(function()
@@ -221,29 +226,20 @@ function M.quatreCentDixHuit()
 
               local type = jsonResponse.type
 
-              -- create a mark and store all the ids to update it
-              local localBuf, nsId, markId, gutterMarkId = M.setMarkUnderCursor("agent_start", "Comment", false)
-
-              -- N.nvim_buf_set_extmark(mark[1], mark[2], row, col, {
-              --   id = mark[3],
-              --   virt_lines = {{{ "nouveau contenu", "Comment" }}},
-              --   virt_lines_above = true,
-              -- })
-
               if type == "agent_start" then
-                M.setMarkUnderCursor("agent_start", "Comment", false)
+                M.updateMark(localBuf, nsId, markId, "agent_start", "Comment", rc, false)
               end
 
               if type == "turn_start" then
-                M.setMarkUnderCursor("turn_start", "Comment", false)
+                M.updateMark(localBuf, nsId, markId, "turn_start", "Comment", rc, false)
               end
 
               if type == "message_update" then
-                M.setMarkUnderCursor("message_update", "Comment", false)
+                M.updateMark(localBuf, nsId, markId, "message_update", "Comment", rc, false)
               end
 
               if type == "turn_end" then
-                M.setMarkUnderCursor("turn_end", "Comment", false)
+                M.updateMark(localBuf, nsId, markId, "turn_end", "Comment", rc, false)
               end
 
               isEof = false
