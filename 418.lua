@@ -150,13 +150,6 @@ function M.quatreCentDixHuit()
       local userContentJson = vim.json.encode(userContent)
       N.nvim_buf_delete(buf, { force = true }) -- bwipeout
 
-      -- Hint: vim.system() only returns output after Pi exits, so use
-      -- vim.U.spawn() with stdin/stdout pipes. Write the JSONL prompt to
-      -- stdin (... .. "\n"), then read_start() stdout, buffer chunks by
-      -- newline, decode each JSON record, and print
-      -- message_update.assistantMessageEvent.delta when its type is
-      -- text_delta.
-
       local reqId = os.time()
       local prompt = "{\"id\": \"418-req-" .. reqId .. "\", \"type\": \"prompt\", \"message\": \"" .. userContentJson .. "\"}"
       local cmd = "pi"
@@ -166,6 +159,7 @@ function M.quatreCentDixHuit()
       local stdout = U.new_pipe()
       local stderr = U.new_pipe()
 
+      -- spawn the process
       local handle, pid = U.spawn(cmd, {
         args = args,
         stdio = { stdin, stdout, stderr }
@@ -173,6 +167,7 @@ function M.quatreCentDixHuit()
         print(">>> exit:", code, signal)
       end)
 
+      -- send the user prompt
       U.write(stdin, prompt .. "\n", function (err)
         if err then
           M.setMarkUnderCursor("Error writing the prompt: " .. tostring(err), "ErrorMsg", true)
@@ -181,10 +176,15 @@ function M.quatreCentDixHuit()
       end)
 
       local dataStreamBuffer = ""
-      local isEof = false
+      local isEol = false
       -- create a mark and store all the ids to update it
-      local localBuf, nsId, markId, _, rc = unpack(M.setMarkUnderCursor("agent_start", "Comment", false))
+      local localBuf, nsId, markId, _, rc = unpack(M.setMarkUnderCursor("Calling Pi...", "Comment", false))
 
+      -- todo: im stuck in "Calling Pi..."
+
+      -- read the stream of data
+      -- we use dataStreamBuffer and isEol to detect if a stream is full and execute the rest of the code on it
+      -- a "full" dataStream is nothing else that a correct json object with a LF at the end in this case
       U.read_start(stdout, function(err, dataStream)
         -- note: mandatory to use schedule to avoid executing that in the fast event context and getting an error
         vim.schedule(function()
@@ -192,33 +192,16 @@ function M.quatreCentDixHuit()
             M.setMarkUnderCursor("Error while reading output stream: " .. tostring(err), "ErrorMsg", true)
             return
           elseif dataStream then
-
-            -- todo:
-            --  uv.read_start returns arbitrary stream chunks, not one complete JSON message per callback
-            --
-            -- Pi RPC writes JSONL, so data can contain:
-            -- - half of one JSON object
-            -- - multiple JSON objects separated by \n
-            -- - a chunk ending midway through a JSON object
-            --
-            -- vim.json.decode(data) requires exactly one complete JSON value. Therefore it fails when a chunk is
-            -- incomplete or combines two JSONL records. You see it twice because the process produced at least
-            -- two chunks that were not independently valid JSON
-            --
-            -- The fix is to keep a stdout buffer, append each data chunk, split complete lines on \n, decode each
-            -- complete line, and keep the final unfinished line for the next callback
-
-            -- getting the whole response from rpc stream
-
+            -- add stream to itself until we react eol
             dataStreamBuffer = dataStreamBuffer .. dataStream
 
             -- check if the last byte value is a LF
             local last_byte = dataStream:byte(-1)
             if last_byte == 10 then
-              isEof = true
+              isEol = true
             end
 
-            if isEof then
+            if isEol then
               ---@type boolean, PiRpcEvent
               local ok, jsonResponse = pcall(vim.json.decode, dataStream)
               if not ok then
@@ -226,28 +209,35 @@ function M.quatreCentDixHuit()
                 return
               end
 
-              local type = jsonResponse.type
+              local eventType = jsonResponse.type
+              local message = jsonResponse.message
+              local assistantEvent = jsonResponse.assistantMessageEvent
+              local toolName = jsonResponse.toolName or "tool"
+              local toolArgument = jsonResponse.args and (jsonResponse.args.command or jsonResponse.args.path)
 
-              if type == "agent_start" then
-                M.updateMark(localBuf, nsId, markId, "agent_start", "Comment", rc, false)
+              if eventType == "agent_start" then
+                M.updateMark(localBuf, nsId, markId, "Pi is thinking...", "Comment", rc, false)
+              elseif eventType == "message_start" and message and message.role == "assistant" then
+                M.updateMark(localBuf, nsId, markId, "Warming up " .. (message.model or "Pi") .. "...", "Comment", rc, false)
+              elseif eventType == "message_update" and assistantEvent and assistantEvent.type == "thinking_end" then
+                local thinking = assistantEvent.content or "Thinking..."
+                -- clean the text, remove all ** and all whitespace characters
+                thinking = thinking:gsub("%*", ""):gsub("%s+", " ")
+                M.updateMark(localBuf, nsId, markId, thinking, "Comment", rc, false)
+              elseif eventType == "tool_execution_start" then
+                local detail = type(toolArgument) == "string" and (": " .. toolArgument) or "..."
+                M.updateMark(localBuf, nsId, markId, "Calling " .. toolName .. detail, "Comment", rc, false)
+              elseif eventType == "tool_execution_end" then
+                local status = jsonResponse.isError and "Failed " or "Finished "
+                local level = jsonResponse.isError and "ErrorMsg" or "Comment"
+                M.updateMark(localBuf, nsId, markId, status .. toolName .. ", thinking...", level, rc, false)
+              elseif eventType == "agent_settled" then
+                M.updateMark(localBuf, nsId, markId, "Done!", "Comment", rc, true)
               end
 
-              if type == "turn_start" then
-                M.updateMark(localBuf, nsId, markId, "turn_start", "Comment", rc, false)
-              end
-
-              if type == "message_update" then
-                M.updateMark(localBuf, nsId, markId, "message_update", "Comment", rc, false)
-              end
-
-              if type == "turn_end" then
-                M.updateMark(localBuf, nsId, markId, "turn_end", "Comment", rc, false)
-              end
-
-              isEof = false
+              isEol = false
               dataStreamBuffer = ""
             end
-
           end
         end)
       end)

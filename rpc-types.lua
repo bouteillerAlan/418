@@ -34,6 +34,9 @@
 ---| "toolcall_start"
 ---| "toolcall_delta"
 ---| "toolcall_end"
+---| "tool_execution_start"
+---| "tool_execution_update"
+---| "tool_execution_end"
 ---| "done"
 ---| "error"
 
@@ -41,9 +44,34 @@
 ---@field type string Content block type
 ---@field text? string Text in a final assistant message
 
+---@class PiRpcUsageCost
+---@field input number Input token cost
+---@field output number Output token cost
+---@field cacheRead number Cache read cost
+---@field cacheWrite number Cache write cost
+---@field total number Total cost
+
+---@class PiRpcUsage
+---@field input number Input token count
+---@field output number Output token count
+---@field cacheRead number Cache read token count
+---@field cacheWrite number Cache write token count
+---@field reasoning number Reasoning token count
+---@field totalTokens number Total token count
+---@field cost PiRpcUsageCost Token costs
+
 ---@class PiRpcMessage
----@field role "system"|"user"|"assistant" Message author
----@field content PiRpcTextContent[] Message content blocks
+---@field role "system"|"user"|"assistant"|"toolResult" Message author
+---@field content string|PiRpcTextContent[] Message content blocks
+---@field api? string
+---@field provider? string Name of the provider
+---@field model? string Name of the model
+---@field stopReason? "pending"|"stop"|"toolUse" Why the assistant stopped
+---@field timestamp? number Timestamp of the block
+---@field usage? PiRpcUsage Token usage and costs
+---@field toolCallId? string Tool call identifier for a tool result
+---@field toolName? string Tool name for a tool result
+---@field isError? boolean Whether a tool result failed
 
 ---@class PiRpcToolCall
 ---@field id string Tool call identifier
@@ -52,6 +80,7 @@
 
 ---@class PiRpcAssistantMessageEvent
 ---@field type PiAssistantMessageEventType Stream update category
+---@field contentIndex? integer Content block index
 ---@field delta? string Text, thinking, or raw tool argument fragment
 ---@field content? string Completed text content
 ---@field id? string Tool call identifier
