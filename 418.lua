@@ -146,7 +146,8 @@ function M.quatreCentDixHuit()
     buffer = buf,
     callback = function ()
       N.nvim_set_option_value('modified', false, { buf = buf }) -- this is important, that avoid error when :w
-      -- local prompt = bufferService.getBufferContentHasString(buf)
+      local userContent = bufferService.getBufferContentHasString(buf)
+      local userContentJson = vim.json.encode(userContent)
       N.nvim_buf_delete(buf, { force = true }) -- bwipeout
 
       -- Hint: vim.system() only returns output after Pi exits, so use
@@ -156,7 +157,8 @@ function M.quatreCentDixHuit()
       -- message_update.assistantMessageEvent.delta when its type is
       -- text_delta.
 
-      local prompt = "{\"id\": \"req-1\", \"type\": \"prompt\", \"message\": \"What give 2+2?\"}"
+      local reqId = os.time()
+      local prompt = "{\"id\": \"418-req-" .. reqId .. "\", \"type\": \"prompt\", \"message\": \"" .. userContentJson .. "\"}"
       local cmd = "pi"
       local args = { "--mode", "rpc", "--no-session" }
 
