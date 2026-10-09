@@ -127,6 +127,158 @@ function M.removeMark(localBuf, nsId, ids)
   end
 end
 
+
+--- Process a rpc event by Pi cmd and update the given mark
+---@param jsonResponse PiRpcEvent a full rpc json block, must be validated before
+---@param localBuf integer the buffer where the mark are
+---@param nsId integer the namespace id of the marks
+---@param markId integer the virtual line mark id
+---@param rc { [1]: integer, [2]: integer } row and column position
+---@return nil
+local function processRpcResponse(jsonResponse, localBuf, nsId, markId, rc)
+  local eventType = jsonResponse.type
+  local message = jsonResponse.message
+  local assistantEvent = jsonResponse.assistantMessageEvent
+  local toolName = jsonResponse.toolName or "tool"
+  local toolArgument = jsonResponse.args and (jsonResponse.args.command or jsonResponse.args.path)
+
+  if eventType == "response" and jsonResponse.success == false then
+    M.updateMark(localBuf, nsId, markId, jsonResponse.error or "Pi rejected the request", "ErrorMsg", rc, false)
+    return
+  end
+
+  if eventType == "agent_start" then
+    M.updateMark(localBuf, nsId, markId, "Pi is thinking...", "Comment", rc, false)
+  elseif eventType == "message_start" and message and message.role == "assistant" then
+    M.updateMark(localBuf, nsId, markId, "Warming up " .. (message.model or "Pi") .. "...", "Comment", rc, false)
+  elseif eventType == "message_update" and assistantEvent and assistantEvent.type == "thinking_end" then
+    local thinking = assistantEvent.content or "Thinking..."
+    -- clean the text, remove all ** and all whitespace characters
+    thinking = thinking:gsub("%*", ""):gsub("%s+", " ")
+    M.updateMark(localBuf, nsId, markId, thinking, "Comment", rc, false)
+  elseif eventType == "tool_execution_start" then
+    local detail = type(toolArgument) == "string" and (": " .. toolArgument) or "..."
+    M.updateMark(localBuf, nsId, markId, "Calling " .. toolName .. detail, "Comment", rc, false)
+  elseif eventType == "tool_execution_end" then
+    local status = jsonResponse.isError and "Failed " or "Finished "
+    local level = jsonResponse.isError and "ErrorMsg" or "Comment"
+    M.updateMark(localBuf, nsId, markId, status .. toolName .. ", thinking...", level, rc, false)
+  elseif eventType == "agent_settled" then
+    M.updateMark(localBuf, nsId, markId, "Done!", "Comment", rc, true)
+  end
+end
+
+-- todo: wip
+local function processRpcStream(buf)
+  N.nvim_set_option_value('modified', false, { buf = buf }) -- this is important, that avoid error when :w
+  local userContent = bufferService.getBufferContentHasString(buf)
+  N.nvim_buf_delete(buf, { force = true }) -- bwipeout
+
+  local reqId = os.time()
+  local prompt = "{\"id\": \"418-req-" .. reqId .. "\", \"type\": \"prompt\", \"message\": \"" .. userContent .. "\"}"
+  local cmd = "pi"
+  local args = { "--mode", "rpc", "--no-session" }
+
+  local stdin = U.new_pipe()
+  local stdout = U.new_pipe()
+  local stderr = U.new_pipe()
+
+  -- spawn the process
+  local handle, pidOrError = U.spawn(cmd, {
+    args = args,
+    stdio = { stdin, stdout, stderr }
+  }, function(code, signal) -- on exit
+    vim.schedule(function ()
+      if code ~= 0 then
+        M.setMarkUnderCursor("Pi exited with code " .. code .. ", signal " .. signal, "ErrorMsg", true)
+      end
+    end)
+  end)
+
+  if not handle then
+    M.setMarkUnderCursor("Could not start Pi: " .. tostring(pidOrError), "ErrorMsg", true)
+    return
+  end
+
+  -- send the user prompt
+  U.write(stdin, prompt .. "\n", function (err)
+    if err then
+      M.setMarkUnderCursor("Error writing the prompt: " .. tostring(err), "ErrorMsg", true)
+      return
+    end
+  end)
+
+  -- create a mark and store all the ids to update it
+  local localBuf, nsId, markId, _, rc = unpack(M.setMarkUnderCursor("Calling Pi...", "Comment", false))
+
+  local incompleteSeg = ""
+  local segments = {}
+
+  -- read the stream of data
+  -- we use dataStreamBuffer and isEol to detect if a stream is full and execute the rest of the code on it
+  -- a "full" dataStream is nothing else that a correct json object with a LF at the end in this case
+  U.read_start(stdout, function(err, dataStream)
+    -- note: mandatory to use schedule to avoid executing that in the fast event context and getting an error
+    vim.schedule(function()
+      if err then
+        M.setMarkUnderCursor("Error while reading output stream: " .. tostring(err), "ErrorMsg", true)
+        return
+      end
+
+      if not dataStream then
+        M.setMarkUnderCursor("No dataStream.", "ErrorMsg", true)
+        return
+      end
+
+      -- we consider that a dataStream can be a full json, some part of it, both
+      -- so we need to detect each part and act on it
+      local start = 1
+      while true do
+        local findStart, findEnd = dataStream:find("\n", start, true)
+
+        if findStart == nil then
+          if incompleteSeg ~= "" then
+            incompleteSeg = incompleteSeg .. dataStream
+          else
+            incompleteSeg = dataStream
+          end
+          break
+        end
+
+        local sub = ""
+        if incompleteSeg ~= nil then
+          sub = incompleteSeg .. dataStream:sub(start, findStart - 1) -- findStart - 1 for getting }
+        else
+          sub = incompleteSeg .. dataStream:sub(start, findStart - 1) -- findStart - 1 for getting }
+        end
+        table.insert(segments, sub)
+        start = start + findEnd + 1 -- findEnd + 1 for getting {
+        end
+
+        -- print(vim.inspect(segments)) -- todo: were here, with all the segments ok I guess?
+
+        for index, _ in ipairs(segments) do
+          local currentSeg = segments[index]
+          table.remove(segments, index)
+          processRpcResponse(currentSeg, localBuf, nsId, markId, rc)
+        end
+
+    end)
+  end)
+
+    U.read_start(stderr, function(err, data)
+      assert(not err, err)
+      if data then
+        M.setMarkUnderCursor(data, "ErrorMsg", true)
+        return
+      else
+        -- print("stderr end", stderr)
+        -- close
+      end
+    end)
+
+end
+
 --- Main function of the module
 function M.quatreCentDixHuit()
   local currentPath = N.nvim_buf_get_name(0)
@@ -144,116 +296,7 @@ function M.quatreCentDixHuit()
   N.nvim_create_autocmd('BufWriteCmd', {
     group = group,
     buffer = buf,
-    callback = function ()
-      N.nvim_set_option_value('modified', false, { buf = buf }) -- this is important, that avoid error when :w
-      local userContent = bufferService.getBufferContentHasString(buf)
-      local userContentJson = vim.json.encode(userContent)
-      N.nvim_buf_delete(buf, { force = true }) -- bwipeout
-
-      local reqId = os.time()
-      local prompt = "{\"id\": \"418-req-" .. reqId .. "\", \"type\": \"prompt\", \"message\": \"" .. userContentJson .. "\"}"
-      local cmd = "pi"
-      local args = { "--mode", "rpc", "--no-session" }
-
-      local stdin = U.new_pipe()
-      local stdout = U.new_pipe()
-      local stderr = U.new_pipe()
-
-      -- spawn the process
-      local handle, pid = U.spawn(cmd, {
-        args = args,
-        stdio = { stdin, stdout, stderr }
-      }, function(code, signal) -- on exit
-        print(">>> exit:", code, signal)
-      end)
-
-      -- send the user prompt
-      U.write(stdin, prompt .. "\n", function (err)
-        if err then
-          M.setMarkUnderCursor("Error writing the prompt: " .. tostring(err), "ErrorMsg", true)
-          return
-        end
-      end)
-
-      local dataStreamBuffer = ""
-      local isEol = false
-      -- create a mark and store all the ids to update it
-      local localBuf, nsId, markId, _, rc = unpack(M.setMarkUnderCursor("Calling Pi...", "Comment", false))
-
-      -- todo: im stuck in "Calling Pi..."
-
-      -- read the stream of data
-      -- we use dataStreamBuffer and isEol to detect if a stream is full and execute the rest of the code on it
-      -- a "full" dataStream is nothing else that a correct json object with a LF at the end in this case
-      U.read_start(stdout, function(err, dataStream)
-        -- note: mandatory to use schedule to avoid executing that in the fast event context and getting an error
-        vim.schedule(function()
-          if err then
-            M.setMarkUnderCursor("Error while reading output stream: " .. tostring(err), "ErrorMsg", true)
-            return
-          elseif dataStream then
-            -- add stream to itself until we react eol
-            dataStreamBuffer = dataStreamBuffer .. dataStream
-
-            -- check if the last byte value is a LF
-            local last_byte = dataStream:byte(-1)
-            if last_byte == 10 then
-              isEol = true
-            end
-
-            if isEol then
-              ---@type boolean, PiRpcEvent
-              local ok, jsonResponse = pcall(vim.json.decode, dataStream)
-              if not ok then
-                M.setMarkUnderCursor("Error while decoding response", "ErrorMsg", true)
-                return
-              end
-
-              local eventType = jsonResponse.type
-              local message = jsonResponse.message
-              local assistantEvent = jsonResponse.assistantMessageEvent
-              local toolName = jsonResponse.toolName or "tool"
-              local toolArgument = jsonResponse.args and (jsonResponse.args.command or jsonResponse.args.path)
-
-              if eventType == "agent_start" then
-                M.updateMark(localBuf, nsId, markId, "Pi is thinking...", "Comment", rc, false)
-              elseif eventType == "message_start" and message and message.role == "assistant" then
-                M.updateMark(localBuf, nsId, markId, "Warming up " .. (message.model or "Pi") .. "...", "Comment", rc, false)
-              elseif eventType == "message_update" and assistantEvent and assistantEvent.type == "thinking_end" then
-                local thinking = assistantEvent.content or "Thinking..."
-                -- clean the text, remove all ** and all whitespace characters
-                thinking = thinking:gsub("%*", ""):gsub("%s+", " ")
-                M.updateMark(localBuf, nsId, markId, thinking, "Comment", rc, false)
-              elseif eventType == "tool_execution_start" then
-                local detail = type(toolArgument) == "string" and (": " .. toolArgument) or "..."
-                M.updateMark(localBuf, nsId, markId, "Calling " .. toolName .. detail, "Comment", rc, false)
-              elseif eventType == "tool_execution_end" then
-                local status = jsonResponse.isError and "Failed " or "Finished "
-                local level = jsonResponse.isError and "ErrorMsg" or "Comment"
-                M.updateMark(localBuf, nsId, markId, status .. toolName .. ", thinking...", level, rc, false)
-              elseif eventType == "agent_settled" then
-                M.updateMark(localBuf, nsId, markId, "Done!", "Comment", rc, true)
-              end
-
-              isEol = false
-              dataStreamBuffer = ""
-            end
-          end
-        end)
-      end)
-
-      U.read_start(stderr, function(err, data)
-        assert(not err, err)
-        if data then
-          M.setMarkUnderCursor(data, "ErrorMsg", true)
-          return
-        else
-          -- print("stderr end", stderr)
-          -- close
-        end
-      end)
-
-    end
+    callback = processRpcStream(buf)
   })
 end
 
