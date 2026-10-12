@@ -230,52 +230,55 @@ local function processRpcStream(buf)
         return
       end
 
-      -- we consider that a dataStream can be a full json, some part of it, both
-      -- so we need to detect each part and act on it
+      -- we consider that a dataStream can be a full json, some part of it or both
+      -- so we need to detect each part "type" and act on it
       local start = 1
       while true do
+        -- find the "start" \n
         local findStart, findEnd = dataStream:find("\n", start, true)
 
+        -- we found no \n so the whole segment is a part of a good segment
         if findStart == nil then
-          if incompleteSeg ~= "" then
+          if incompleteSeg ~= "" then -- we prepend any previous incomplete segment if existing
             incompleteSeg = incompleteSeg .. dataStream
           else
             incompleteSeg = dataStream
           end
-          break
+          break -- we break to exit the loop
         end
 
         local sub = ""
         if incompleteSeg ~= nil then
-          sub = incompleteSeg .. dataStream:sub(start, findStart - 1) -- findStart - 1 for getting }
+          sub = incompleteSeg .. dataStream:sub(start, findStart - 1) -- findStart - 1 for getting "}"
         else
-          sub = incompleteSeg .. dataStream:sub(start, findStart - 1) -- findStart - 1 for getting }
+          sub = dataStream:sub(start, findStart - 1) -- findStart - 1 for getting "}"
         end
         table.insert(segments, sub)
-        start = start + findEnd + 1 -- findEnd + 1 for getting {
-        end
+        start = start + findEnd + 1 -- findEnd + 1 for getting "{"
+      end
 
-        -- print(vim.inspect(segments)) -- todo: were here, with all the segments ok I guess?
+      print(#segments) -- todo: were here, with all the segments ok I guess?
 
-        for index, _ in ipairs(segments) do
-          local currentSeg = segments[index]
-          table.remove(segments, index)
-          processRpcResponse(currentSeg, localBuf, nsId, markId, rc)
-        end
+      -- for each, now validated, json segment process the response
+      for index, _ in ipairs(segments) do
+        local currentSeg = segments[index]
+        table.remove(segments, index)
+        processRpcResponse(currentSeg, localBuf, nsId, markId, rc)
+      end
 
     end)
   end)
 
-    U.read_start(stderr, function(err, data)
-      assert(not err, err)
-      if data then
-        M.setMarkUnderCursor(data, "ErrorMsg", true)
-        return
-      else
-        -- print("stderr end", stderr)
-        -- close
-      end
-    end)
+  U.read_start(stderr, function(err, data)
+    assert(not err, err)
+    if data then
+      M.setMarkUnderCursor(data, "ErrorMsg", true)
+      return
+    else
+      print("stderr end", stderr)
+      -- close
+    end
+  end)
 
 end
 
@@ -296,7 +299,9 @@ function M.quatreCentDixHuit()
   N.nvim_create_autocmd('BufWriteCmd', {
     group = group,
     buffer = buf,
-    callback = processRpcStream(buf)
+    callback = function (event)
+      processRpcStream(event.buf)
+    end,
   })
 end
 
