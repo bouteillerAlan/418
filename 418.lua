@@ -20,6 +20,10 @@ local function processRpcResponse(jsonResponse, localBuf, nsId, markId, rc)
   local toolName = jsonResponse.toolName or "tool"
   local toolArgument = jsonResponse.args and (jsonResponse.args.command or jsonResponse.args.path)
 
+  -- flag to avoid sending same message multiple time for nothing
+  -- this is 100% for UX
+  local warmUp = true
+
   if eventType == "response" and jsonResponse.success == false then
     markService.updateMark(localBuf, nsId, markId, jsonResponse.error or "Pi rejected the request", "ErrorMsg", rc, false)
     return
@@ -28,7 +32,10 @@ local function processRpcResponse(jsonResponse, localBuf, nsId, markId, rc)
   if eventType == "agent_start" then
     markService.updateMark(localBuf, nsId, markId, "Pi is thinking...", "Comment", rc, false)
   elseif eventType == "message_start" and message and message.role == "assistant" then
-    markService.updateMark(localBuf, nsId, markId, "Warming up " .. (message.model or "Pi") .. "...", "Comment", rc, false)
+    if warmUp then
+      markService.updateMark(localBuf, nsId, markId, "Warming up " .. (message.model or "Pi") .. "...", "Comment", rc, false)
+      warmUp = false
+    end
   elseif eventType == "message_update" and assistantEvent and assistantEvent.type == "thinking_end" then
     local thinking = assistantEvent.content or "Thinking..."
     -- clean the text, remove all ** and all whitespace characters
@@ -109,54 +116,50 @@ local function processRpcStream(buf)
         return
       end
 
-      -- todo: check that loop injected data seem wrong
-      --
       -- we consider that a dataStream can be a full json, some part of it or both
       -- so we need to detect each part "type" and act on it
-      local start = 1
+      local cursor = 1
       while true do
-        -- find the "start" \n
-        local findStart, findEnd = dataStream:find("\n", start, true)
-
-        -- we found no \n so the whole segment is a part of a good segment
-        if findStart == nil then
-          -- todo: in theory we can always do the .. since we preprend ""
-          if incompleteSeg ~= "" then -- we prepend any previous incomplete segment if existing
-            incompleteSeg = incompleteSeg .. dataStream
-          else
-            incompleteSeg = dataStream
-          end
-          break -- we break to exit the loop
+        -- end of string exit
+        if cursor > dataStream:len() then
+          break
         end
 
-        local sub = ""
-        if incompleteSeg ~= "" then
-          sub = incompleteSeg .. dataStream:sub(start, findStart - 1) -- findStart - 1 for getting "}"
-        else
-          sub = dataStream:sub(start, findStart - 1) -- findStart - 1 for getting "}"
+        -- note: dont forget that in find if we search for "x" both position are
+        -- going to be the same value, don't loose hours like me 🤡
+        local _, findEnd = dataStream:find("\n", cursor, true)
+
+        -- we found no \n so the whole segment is a part and not a full good segment
+        if findEnd == nil then
+          -- since an empty incompleteSeg is empty anyway we can
+          -- prepend it event when it contain nothing, this just avoid some line
+          -- of code for a if else
+          incompleteSeg = incompleteSeg .. dataStream:sub(cursor)
+          -- since we found nothing no search is needed anymore
+          break
         end
-        table.insert(segments, sub)
-        start = start + findEnd -- findEnd for getting "{"
+
+        local subText = ""
+        -- same has before, empty is empty so ... :)
+        subText = incompleteSeg .. dataStream:sub(cursor, findEnd)
+        incompleteSeg = ""
+
+        subText = string.gsub(subText, "\n", "")
+        table.insert(segments, subText) -- remove the leading "\n"
+        cursor = findEnd + 1 -- move the cursor to search the next segment
       end -- while
 
-      -- for each, now validated, json segment process the response
+      -- for each json segment process the response
       while true do
-        local mfSub = string.gsub(segments[idx], "\0", "") -- remove null byte at the end
+        local gSub = string.gsub(segments[idx], "\0", "") -- remove null byte at the end
 
-        print(mfSub)
-        do
-          return
-        end
-
-        local currentSeg = vim.json.decode(mfSub)
+        local currentSeg = vim.json.decode(gSub)
         processRpcResponse(currentSeg, localBuf, nsId, markId, rc)
         if idx == #segments then
           break
         end
         idx = idx + 1
       end
-
-      -- todo: reset idx, segments, incompleteSeg
 
     end) -- vim.schedule
   end) -- read_start
