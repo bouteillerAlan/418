@@ -6,23 +6,27 @@ local M = {}
 local N = vim.api
 local U = vim.uv
 
+-- todo: handle the multi edit case (multi agent and user in the same file)
+-- todo: inject the current line in the prompt -> ? and specify that the user want the response in this line
+
+-- flag to avoid sending same message multiple time for nothing
+-- this is 100% for UX
+local warmUp = true
+
 --- Process a rpc event by Pi cmd and update the given mark
 ---@param jsonResponse PiRpcEvent a full rpc json block, must be validated before
 ---@param localBuf integer the buffer where the mark are
 ---@param nsId integer the namespace id of the marks
 ---@param markId integer the virtual line mark id
+---@param gutMarkId integer the gutter mark id
 ---@param rc { [1]: integer, [2]: integer } row and column position
 ---@return nil
-local function processRpcResponse(jsonResponse, localBuf, nsId, markId, rc)
+local function processRpcResponse(jsonResponse, localBuf, nsId, markId, gutMarkId, rc)
   local eventType = jsonResponse.type
   local message = jsonResponse.message
   local assistantEvent = jsonResponse.assistantMessageEvent
   local toolName = jsonResponse.toolName or "tool"
   local toolArgument = jsonResponse.args and (jsonResponse.args.command or jsonResponse.args.path)
-
-  -- flag to avoid sending same message multiple time for nothing
-  -- this is 100% for UX
-  local warmUp = true
 
   if eventType == "response" and jsonResponse.success == false then
     markService.updateMark(localBuf, nsId, markId, jsonResponse.error or "Pi rejected the request", "ErrorMsg", rc, false)
@@ -49,11 +53,16 @@ local function processRpcResponse(jsonResponse, localBuf, nsId, markId, rc)
     local level = jsonResponse.isError and "ErrorMsg" or "Comment"
     markService.updateMark(localBuf, nsId, markId, status .. toolName .. ", thinking...", level, rc, false)
   elseif eventType == "agent_settled" then
-    markService.updateMark(localBuf, nsId, markId, "Done!", "Comment", rc, true)
+    markService.updateMark(localBuf, nsId, markId, "Done!", "Comment", rc, false)
+    vim.defer_fn(function ()
+      markService.removeMark(localBuf, nsId, { markId, gutMarkId })
+    end, 5000)
   end
 end
 
--- todo: wip
+--- Send the prompt buffer content to Pi and process its RPC response stream
+---@param buf integer prompt buffer handle
+---@return nil
 local function processRpcStream(buf)
   N.nvim_set_option_value('modified', false, { buf = buf }) -- this is important, that avoid error when :w
   local userContent = bufferService.getBufferContentHasString(buf)
@@ -94,7 +103,7 @@ local function processRpcStream(buf)
   end)
 
   -- create a mark and store all the ids to update it
-  local localBuf, nsId, markId, _, rc = unpack(markService.setMarkUnderCursor("Calling Pi...", "Comment", false))
+  local localBuf, nsId, markId, gutMarkId, rc = unpack(markService.setMarkUnderCursor("Calling Pi...", "Comment", false))
 
   local incompleteSeg = ""
   local segments = {}
@@ -154,7 +163,7 @@ local function processRpcStream(buf)
         local gSub = string.gsub(segments[idx], "\0", "") -- remove null byte at the end
 
         local currentSeg = vim.json.decode(gSub)
-        processRpcResponse(currentSeg, localBuf, nsId, markId, rc)
+        processRpcResponse(currentSeg, localBuf, nsId, markId, gutMarkId, rc)
         if idx == #segments then
           break
         end
