@@ -1,132 +1,10 @@
 require("plugins.418.rpc-types")
 local bufferService = require("plugins.418.bufferService")
-local validationService = require("plugins.418.validationService")
+local markService = require("plugins.418.markService")
 
 local M = {}
 local N = vim.api
 local U = vim.uv
-
----@alias markDataType { [1]: integer, [2]: integer, [3]: integer, [4]: integer, [5]: { [1]: integer, [2]: integer } }
-
---- Shows text on a virtual line
---- Text is show on top of the cursor line except for line 1 where the text is below
----@param content string the content you want to be shown
----@param level "Comment" | "WarningMsg" | "ErrorMsg" the type of the message, change the color and style of the text
----@param autoClose boolean if true the mark auto remove itself after 10s
----@return markDataType markData return all the data needed to update or remove the mark later, in order: localBuf, nsId, markId, gutterMarkId, rc
-function M.setMarkUnderCursor(content, level, autoClose)
-  validationService.validateString(content, "content", true)
-  validationService.validateString(level, "level", true)
-  validationService.validateBoolean(autoClose, "autoClose", true)
-  validationService.validateOneOf(level, "level", { "Comment", "WarningMsg", "ErrorMsg" })
-
-  if content == nil or string.len(content) == 0 then
-    content = "Pi is thinking..."
-  end
-
-  if level == nil or string.len(level) == 0 then
-    level = "Comment"
-  end
-
-  if autoClose == nil then
-    autoClose = false
-  end
-
-  local localBuf = N.nvim_get_current_buf()
-  local rid = "418-" .. os.time() -- create a unique name to avoid conflict
-  local nsId = N.nvim_create_namespace(rid)
-
-  -- row, col
-  local cursor = vim.api.nvim_win_get_cursor(0)
-  local rc = { cursor[1] - 1, cursor[2] } -- -1 to get the line on top of the current
-  if cursor[1] == 1 then -- handle the first line case
-    rc[1] = rc[1] + 1
-  end
-
-  -- note: we need these kind of message
-  -- {{ "Generated output", "Comment" }},
-  -- {{ "Warning message", "WarningMsg" }},
-  -- {{ "Error message", "ErrorMsg" }},
-  local markId = N.nvim_buf_set_extmark(localBuf, nsId, rc[1], rc[2], {
-    virt_lines = {{{ content, level }}},
-    virt_lines_above = true,
-  })
-
-  local gutterMarkId = N.nvim_buf_set_extmark(localBuf, nsId, rc[1], rc[2], {
-    sign_text = "π",
-    sign_hl_group = level,
-  })
-
-  if autoClose then
-    vim.defer_fn(function()
-      M.removeMark(localBuf, nsId, { markId, gutterMarkId })
-    end, 10000)
-  end
-
-  return { localBuf, nsId, markId, gutterMarkId, rc }
-end
-
---- Update an extmarks content from a buffer
----@param localBuf integer the buffer containing the marks
----@param nsId integer the namespace id of the marks
----@param markId integer the virtual line mark id
----@param content string the content you want to be shown
----@param level "Comment" | "WarningMsg" | "ErrorMsg" the type of the message, change the color and style of the text
----@param rc { [1]: integer, [2]: integer } row and column position
----@param autoClose boolean auto close the mark after 10 seconds, this doesn't remove automatically the gutter symbol that is another mark
----@return nil
-function M.updateMark(localBuf, nsId, markId, content, level, rc, autoClose)
-  validationService.validateInt(localBuf, "localBuf")
-  validationService.validateInt(nsId, "nsId")
-  validationService.validateInt(markId, "markId")
-  validationService.validateString(content, "content", true)
-  validationService.validateString(level, "level", true)
-  validationService.validateBoolean(autoClose, "autoClose", true)
-  validationService.validateTable(rc, "rc")
-  validationService.validateNonNegativeInt(rc[1], "rc row")
-  validationService.validateNonNegativeInt(rc[2], "rc column")
-  validationService.validateOneOf(level, "level", { "Comment", "WarningMsg", "ErrorMsg" })
-
-  if content == nil or string.len(content) == 0 then
-    content = "Pi is thinking..."
-  end
-
-  if level == nil or string.len(level) == 0 then
-    level = "Comment"
-  end
-
-  if autoClose == nil then
-    autoClose = false
-  end
-
-  N.nvim_buf_set_extmark(localBuf, nsId, rc[1], rc[2], {
-    id = markId,
-    virt_lines = {{{ content, level }}},
-    virt_lines_above = true,
-  })
-
-  if autoClose then
-    vim.defer_fn(function()
-      M.removeMark(localBuf, nsId, { markId })
-    end, 10000)
-  end
-end
-
---- Removes extmarks from a buffer
----@param localBuf integer the buffer where the mark are
----@param nsId integer the group id of the mark
----@param ids integer[] the mark id's you want to remove
----@return nil
-function M.removeMark(localBuf, nsId, ids)
-  validationService.validateInt(localBuf, "localBuf")
-  validationService.validateInt(nsId, "nsId")
-  validationService.validateTable(ids, "ids")
-
-  for _, id in ipairs(ids) do
-    N.nvim_buf_del_extmark(localBuf, nsId, id)
-  end
-end
-
 
 --- Process a rpc event by Pi cmd and update the given mark
 ---@param jsonResponse PiRpcEvent a full rpc json block, must be validated before
@@ -143,28 +21,28 @@ local function processRpcResponse(jsonResponse, localBuf, nsId, markId, rc)
   local toolArgument = jsonResponse.args and (jsonResponse.args.command or jsonResponse.args.path)
 
   if eventType == "response" and jsonResponse.success == false then
-    M.updateMark(localBuf, nsId, markId, jsonResponse.error or "Pi rejected the request", "ErrorMsg", rc, false)
+    markService.updateMark(localBuf, nsId, markId, jsonResponse.error or "Pi rejected the request", "ErrorMsg", rc, false)
     return
   end
 
   if eventType == "agent_start" then
-    M.updateMark(localBuf, nsId, markId, "Pi is thinking...", "Comment", rc, false)
+    markService.updateMark(localBuf, nsId, markId, "Pi is thinking...", "Comment", rc, false)
   elseif eventType == "message_start" and message and message.role == "assistant" then
-    M.updateMark(localBuf, nsId, markId, "Warming up " .. (message.model or "Pi") .. "...", "Comment", rc, false)
+    markService.updateMark(localBuf, nsId, markId, "Warming up " .. (message.model or "Pi") .. "...", "Comment", rc, false)
   elseif eventType == "message_update" and assistantEvent and assistantEvent.type == "thinking_end" then
     local thinking = assistantEvent.content or "Thinking..."
     -- clean the text, remove all ** and all whitespace characters
     thinking = thinking:gsub("%*", ""):gsub("%s+", " ")
-    M.updateMark(localBuf, nsId, markId, thinking, "Comment", rc, false)
+    markService.updateMark(localBuf, nsId, markId, thinking, "Comment", rc, false)
   elseif eventType == "tool_execution_start" then
     local detail = type(toolArgument) == "string" and (": " .. toolArgument) or "..."
-    M.updateMark(localBuf, nsId, markId, "Calling " .. toolName .. detail, "Comment", rc, false)
+    markService.updateMark(localBuf, nsId, markId, "Calling " .. toolName .. detail, "Comment", rc, false)
   elseif eventType == "tool_execution_end" then
     local status = jsonResponse.isError and "Failed " or "Finished "
     local level = jsonResponse.isError and "ErrorMsg" or "Comment"
-    M.updateMark(localBuf, nsId, markId, status .. toolName .. ", thinking...", level, rc, false)
+    markService.updateMark(localBuf, nsId, markId, status .. toolName .. ", thinking...", level, rc, false)
   elseif eventType == "agent_settled" then
-    M.updateMark(localBuf, nsId, markId, "Done!", "Comment", rc, true)
+    markService.updateMark(localBuf, nsId, markId, "Done!", "Comment", rc, true)
   end
 end
 
@@ -190,29 +68,30 @@ local function processRpcStream(buf)
   }, function(code, signal) -- on exit
     vim.schedule(function ()
       if code ~= 0 then
-        M.setMarkUnderCursor("Pi exited with code " .. code .. ", signal " .. signal, "ErrorMsg", true)
+        markService.setMarkUnderCursor("Pi exited with code " .. code .. ", signal " .. signal, "ErrorMsg", true)
       end
     end)
   end)
 
   if not handle then
-    M.setMarkUnderCursor("Could not start Pi: " .. tostring(pidOrError), "ErrorMsg", true)
+    markService.setMarkUnderCursor("Could not start Pi: " .. tostring(pidOrError), "ErrorMsg", true)
     return
   end
 
   -- send the user prompt
   U.write(stdin, prompt .. "\n", function (err)
     if err then
-      M.setMarkUnderCursor("Error writing the prompt: " .. tostring(err), "ErrorMsg", true)
+      markService.setMarkUnderCursor("Error writing the prompt: " .. tostring(err), "ErrorMsg", true)
       return
     end
   end)
 
   -- create a mark and store all the ids to update it
-  local localBuf, nsId, markId, _, rc = unpack(M.setMarkUnderCursor("Calling Pi...", "Comment", false))
+  local localBuf, nsId, markId, _, rc = unpack(markService.setMarkUnderCursor("Calling Pi...", "Comment", false))
 
   local incompleteSeg = ""
   local segments = {}
+  local idx = 1
 
   -- read the stream of data
   -- we use dataStreamBuffer and isEol to detect if a stream is full and execute the rest of the code on it
@@ -221,15 +100,17 @@ local function processRpcStream(buf)
     -- note: mandatory to use schedule to avoid executing that in the fast event context and getting an error
     vim.schedule(function()
       if err then
-        M.setMarkUnderCursor("Error while reading output stream: " .. tostring(err), "ErrorMsg", true)
+        markService.setMarkUnderCursor("Error while reading output stream: " .. tostring(err), "ErrorMsg", true)
         return
       end
 
       if not dataStream then
-        M.setMarkUnderCursor("No dataStream.", "ErrorMsg", true)
+        markService.setMarkUnderCursor("No dataStream.", "ErrorMsg", true)
         return
       end
 
+      -- todo: check that loop injected data seem wrong
+      --
       -- we consider that a dataStream can be a full json, some part of it or both
       -- so we need to detect each part "type" and act on it
       local start = 1
@@ -239,6 +120,7 @@ local function processRpcStream(buf)
 
         -- we found no \n so the whole segment is a part of a good segment
         if findStart == nil then
+          -- todo: in theory we can always do the .. since we preprend ""
           if incompleteSeg ~= "" then -- we prepend any previous incomplete segment if existing
             incompleteSeg = incompleteSeg .. dataStream
           else
@@ -248,31 +130,41 @@ local function processRpcStream(buf)
         end
 
         local sub = ""
-        if incompleteSeg ~= nil then
+        if incompleteSeg ~= "" then
           sub = incompleteSeg .. dataStream:sub(start, findStart - 1) -- findStart - 1 for getting "}"
         else
           sub = dataStream:sub(start, findStart - 1) -- findStart - 1 for getting "}"
         end
         table.insert(segments, sub)
-        start = start + findEnd + 1 -- findEnd + 1 for getting "{"
-      end
-
-      print(#segments) -- todo: were here, with all the segments ok I guess?
+        start = start + findEnd -- findEnd for getting "{"
+      end -- while
 
       -- for each, now validated, json segment process the response
-      for index, _ in ipairs(segments) do
-        local currentSeg = segments[index]
-        table.remove(segments, index)
+      while true do
+        local mfSub = string.gsub(segments[idx], "\0", "") -- remove null byte at the end
+
+        print(mfSub)
+        do
+          return
+        end
+
+        local currentSeg = vim.json.decode(mfSub)
         processRpcResponse(currentSeg, localBuf, nsId, markId, rc)
+        if idx == #segments then
+          break
+        end
+        idx = idx + 1
       end
 
-    end)
-  end)
+      -- todo: reset idx, segments, incompleteSeg
+
+    end) -- vim.schedule
+  end) -- read_start
 
   U.read_start(stderr, function(err, data)
     assert(not err, err)
     if data then
-      M.setMarkUnderCursor(data, "ErrorMsg", true)
+      markService.setMarkUnderCursor(data, "ErrorMsg", true)
       return
     else
       print("stderr end", stderr)
