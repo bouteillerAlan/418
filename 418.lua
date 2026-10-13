@@ -7,6 +7,7 @@ local N = vim.api
 local U = vim.uv
 
 -- todo: handle the multi edit case (multi agent and user in the same file)
+-- todo: put --no-session in a setting
 
 -- flag to avoid sending same message multiple time for nothing
 -- this is 100% for UX
@@ -132,6 +133,7 @@ local function startAndProcessRpcStream(buf, userData)
       local cursor = 1
       while true do
         -- end of string exit
+        -- this is not char perfect but since we "cut" on the find this is perfectly fine
         if cursor > dataStream:len() then
           break
         end
