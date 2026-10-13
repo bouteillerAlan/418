@@ -7,7 +7,6 @@ local N = vim.api
 local U = vim.uv
 
 -- todo: handle the multi edit case (multi agent and user in the same file)
--- todo: inject the current line in the prompt -> ? and specify that the user want the response in this line
 
 -- flag to avoid sending same message multiple time for nothing
 -- this is 100% for UX
@@ -62,14 +61,17 @@ end
 
 --- Send the prompt buffer content to Pi and process its RPC response stream
 ---@param buf integer prompt buffer handle
+---@param userData string current path and line of the user prompt formatted
 ---@return nil
-local function processRpcStream(buf)
+local function startAndProcessRpcStream(buf, userData)
   N.nvim_set_option_value('modified', false, { buf = buf }) -- this is important, that avoid error when :w
   local userContent = bufferService.getBufferContentHasString(buf)
   N.nvim_buf_delete(buf, { force = true }) -- bwipeout
 
+  local composedPrompt = userData .. " " .. userContent
+
   local reqId = os.time()
-  local prompt = "{\"id\": \"418-req-" .. reqId .. "\", \"type\": \"prompt\", \"message\": \"" .. userContent .. "\"}"
+  local prompt = "{\"id\": \"418-req-" .. reqId .. "\", \"type\": \"prompt\", \"message\": \"" .. composedPrompt .. "\"}"
   local cmd = "pi"
   local args = { "--mode", "rpc", "--no-session" }
 
@@ -188,13 +190,17 @@ end
 
 --- Main function of the module
 function M.quatreCentDixHuit()
-  local currentPath = N.nvim_buf_get_name(0)
+  -- get the current path, line and column
+  local path = N.nvim_buf_get_name(0)
+  local line, column = unpack(N.nvim_win_get_cursor(0))
+  local userData = "User is on line " .. line .. " of file " .. path .. ", if not stated otherwise or logically wrong you should respond on this line and file."
+
   local buf, win = bufferService.createBuf()
 
   -- inject the path at line 1 and position the cursor at line 2
-  N.nvim_buf_set_lines(buf, 0, -1, false, { 'File path:' .. currentPath .. ' ' })
-  N.nvim_buf_set_lines(buf, 1, -1, false, { '' } )
-  N.nvim_win_set_cursor(win, { 2, 0 })
+  -- N.nvim_buf_set_lines(buf, 0, -1, false, { 'File path:' .. path .. ' ' })
+  -- N.nvim_buf_set_lines(buf, 1, -1, false, { '' } )
+  N.nvim_win_set_cursor(win, { 1, 0 })
 
   -- setup an event for write
   -- group allow to remove the cmd on reload for example
@@ -204,7 +210,7 @@ function M.quatreCentDixHuit()
     group = group,
     buffer = buf,
     callback = function (event)
-      processRpcStream(event.buf)
+      startAndProcessRpcStream(event.buf, userData)
     end,
   })
 end
