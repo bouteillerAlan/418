@@ -193,6 +193,7 @@ end
 --- Main function of the module
 function M.quatreCentDixHuit()
   -- get the current path, line and column
+  -- 0 = current buffer
   local path = N.nvim_buf_get_name(0)
   local line, column = unpack(N.nvim_win_get_cursor(0))
   local userData = "User is on line " .. line .. " of file " .. path .. ", if not stated otherwise or logically wrong you should respond on this line and file."
@@ -217,8 +218,29 @@ function M.quatreCentDixHuit()
   })
 end
 
+function M.test()
+  -- N.nvim_buf_set_lines()
+  -- N.nvim_buf_set_text()
+  --
+  -- if no visual selection we use the current line
+  -- if visual selection we use the selection
+  -- both via tracking extmarks (to follow line if edit)
+  --
+  -- data is on the visual selection ('<'>)
+
+  -- we need to esc the visual before
+  -- applying the extmarks: https://www.reddit.com/r/neovim/comments/13mfta8/reliably_get_the_visual_selection_range/
+  --
+  -- when prompting, at the end
+  -- agent write on a temp file
+  -- if the visual selection is still valid
+  -- we write into the buffer via nvim_buf_set_lines and the temp file
+end
+
 function M.setup()
-  vim.keymap.set("n", "<leader>ppa", M.quatreCentDixHuit, { desc = "" })
+  -- we should have a shortcut mapped to visual to inject in place
+  vim.keymap.set("x", "<leader>4v", M.quatreCentDixHuit, { desc = "" })
+  -- another one to prompt aside via a new buffer
 end
 
 return {
