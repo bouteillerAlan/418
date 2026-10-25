@@ -3,8 +3,9 @@ local bufferService = require("plugins.418.bufferService")
 local markService = require("plugins.418.markService")
 
 local M = {}
-local N = vim.api
+local V = vim.api
 local U = vim.uv
+local F = vim.fn
 
 -- todo: handle the multi edit case (multi agent and user in the same file)
 -- todo: put --no-session in a setting
@@ -65,9 +66,9 @@ end
 ---@param userData string current path and line of the user prompt formatted
 ---@return nil
 local function startAndProcessRpcStream(buf, userData)
-  N.nvim_set_option_value('modified', false, { buf = buf }) -- this is important, that avoid error when :w
+  V.nvim_set_option_value('modified', false, { buf = buf }) -- this is important, that avoid error when :w
   local userContent = bufferService.getBufferContentHasString(buf)
-  N.nvim_buf_delete(buf, { force = true }) -- bwipeout
+  V.nvim_buf_delete(buf, { force = true }) -- bwipeout
 
   local composedPrompt = userData .. " " .. userContent
 
@@ -87,26 +88,26 @@ local function startAndProcessRpcStream(buf, userData)
   }, function(code, signal) -- on exit
     vim.schedule(function ()
       if code ~= 0 then
-        markService.setMarkUnderCursor("Pi exited with code " .. code .. ", signal " .. signal, "ErrorMsg", true)
+        markService.setVirtLineUnderCursor("Pi exited with code " .. code .. ", signal " .. signal, "ErrorMsg", true)
       end
     end)
   end)
 
   if not handle then
-    markService.setMarkUnderCursor("Could not start Pi: " .. tostring(pidOrError), "ErrorMsg", true)
+    markService.setVirtLineUnderCursor("Could not start Pi: " .. tostring(pidOrError), "ErrorMsg", true)
     return
   end
 
   -- send the user prompt
   U.write(stdin, prompt .. "\n", function (err)
     if err then
-      markService.setMarkUnderCursor("Error writing the prompt: " .. tostring(err), "ErrorMsg", true)
+      markService.setVirtLineUnderCursor("Error writing the prompt: " .. tostring(err), "ErrorMsg", true)
       return
     end
   end)
 
   -- create a mark and store all the ids to update it
-  local localBuf, nsId, markId, gutMarkId, rc = unpack(markService.setMarkUnderCursor("Calling Pi...", "Comment", false))
+  local localBuf, nsId, markId, gutMarkId, rc = unpack(markService.setVirtLineUnderCursor("Calling Pi...", "Comment", false))
 
   local incompleteSeg = ""
   local segments = {}
@@ -119,12 +120,12 @@ local function startAndProcessRpcStream(buf, userData)
     -- note: mandatory to use schedule to avoid executing that in the fast event context and getting an error
     vim.schedule(function()
       if err then
-        markService.setMarkUnderCursor("Error while reading output stream: " .. tostring(err), "ErrorMsg", true)
+        markService.setVirtLineUnderCursor("Error while reading output stream: " .. tostring(err), "ErrorMsg", true)
         return
       end
 
       if not dataStream then
-        markService.setMarkUnderCursor("No dataStream.", "ErrorMsg", true)
+        markService.setVirtLineUnderCursor("No dataStream.", "ErrorMsg", true)
         return
       end
 
@@ -180,7 +181,7 @@ local function startAndProcessRpcStream(buf, userData)
   U.read_start(stderr, function(err, data)
     assert(not err, err)
     if data then
-      markService.setMarkUnderCursor(data, "ErrorMsg", true)
+      markService.setVirtLineUnderCursor(data, "ErrorMsg", true)
       return
     else
       print("stderr end", stderr)
@@ -194,8 +195,8 @@ end
 function M.quatreCentDixHuit()
   -- get the current path, line and column
   -- 0 = current buffer
-  local path = N.nvim_buf_get_name(0)
-  local line, column = unpack(N.nvim_win_get_cursor(0))
+  local path = V.nvim_buf_get_name(0)
+  local line, column = unpack(V.nvim_win_get_cursor(0))
   local userData = "User is on line " .. line .. " of file " .. path .. ", if not stated otherwise or logically wrong you should respond on this line and file."
 
   local buf, win = bufferService.createBuf()
@@ -203,13 +204,13 @@ function M.quatreCentDixHuit()
   -- inject the path at line 1 and position the cursor at line 2
   -- N.nvim_buf_set_lines(buf, 0, -1, false, { 'File path:' .. path .. ' ' })
   -- N.nvim_buf_set_lines(buf, 1, -1, false, { '' } )
-  N.nvim_win_set_cursor(win, { 1, 0 })
+  V.nvim_win_set_cursor(win, { 1, 0 })
 
   -- setup an event for write
   -- group allow to remove the cmd on reload for example
   -- avoiding multiple instance of one cmd
-  local group = N.nvim_create_augroup("BufAction", { clear = true })
-  N.nvim_create_autocmd('BufWriteCmd', {
+  local group = V.nvim_create_augroup("BufAction", { clear = true })
+  V.nvim_create_autocmd('BufWriteCmd', {
     group = group,
     buffer = buf,
     callback = function (event)
@@ -221,16 +222,17 @@ end
 function M.test()
   -- N.nvim_buf_set_lines()
   -- N.nvim_buf_set_text()
-  --
-  -- if no visual selection we use the current line
-  -- if visual selection we use the selection
-  -- both via tracking extmarks (to follow line if edit)
-  --
-  -- data is on the visual selection ('<'>)
 
-  -- we need to esc the visual before
-  -- applying the extmarks: https://www.reddit.com/r/neovim/comments/13mfta8/reliably_get_the_visual_selection_range/
-  --
+  -- get current visual selection
+  local vstart = F.getpos(".")
+  local vend = F.getpos("v")
+  -- set mark to "save" the target
+  local markIds = markService.setMarkOnPosition(vstart, vend)
+
+  -- send esc, like that we "save" the actual visual selection on '<'> and also exit the mode
+  local escape = vim.api.nvim_replace_termcodes("<Esc>", true, false, true)
+  vim.api.nvim_feedkeys(escape, "nx", false)
+
   -- when prompting, at the end
   -- agent write on a temp file
   -- if the visual selection is still valid
@@ -239,7 +241,7 @@ end
 
 function M.setup()
   -- we should have a shortcut mapped to visual to inject in place
-  vim.keymap.set("x", "<leader>4v", M.quatreCentDixHuit, { desc = "" })
+  vim.keymap.set("x", "<leader>ppa", M.test, { desc = "" })
   -- another one to prompt aside via a new buffer
 end
 
